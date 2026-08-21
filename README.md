@@ -1,6 +1,6 @@
 # ZoomIt
 
-A python script to download Zoom recordings without using a browser.
+For my pakhi.  A python script to download Zoom recordings without using a browser.
 
 ## How to use
 

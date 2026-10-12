@@ -3,6 +3,8 @@ import commentjson as json
 import requests
 from playwright.sync_api import sync_playwright, TimeoutError
 from tqdm.auto import tqdm
+import traceback
+from pathlib import Path
 
 with open('input.json', 'r', encoding='utf-8') as f:
     ZOOM_URLS = json.load(f)
@@ -23,7 +25,7 @@ def download_current_video(context, video_response, output):
         f"{video_len / (1024 * 1024):.1f} MB"
     )
 
-    with open(output, "wb") as f:
+    with open(f"downloads/{output}", "wb") as f:
         for start in tqdm(range(0, video_len, CHUNK_SIZE)):
 
             end = min(
@@ -54,78 +56,88 @@ for _item in ZOOM_URLS:
     password = _item['Passcode']
     output   = _item['Title']
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            accept_downloads=True
-        )
+    if Path(f"downloads/{output} (1).mp4").is_file():
+        print(f"{output} already exists, skipping.")
+        continue
+    else:
+        print(f"{output} doesn't exists, skipping.")
+        continue
 
-        print(f"Downloading '{output}'")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                accept_downloads=True
+            )
 
-        page = context.new_page()
+            print(f"Downloading '{output}'")
 
-        video_response = None
+            page = context.new_page()
 
-        def on_response(response):
-            global video_response
-            # print("--> on_response")
+            video_response = None
 
-            url = response.url
-            content_type = response.headers.get("content-type", "").lower()
+            def on_response(response):
+                global video_response
+                # print("--> on_response")
 
-            if (
-                "video/mp4" in content_type
-                or ".mp4" in url.lower()
-            ):
-                print()
-                print("========================================")
-                print("VIDEO RESPONSE FOUND")
-                print("Status:", response.status)
-                print("Content-Type:", content_type)
-                print("URL:", url[:200] + "...")
-                print("Range:", response.headers.get("content-range"))
-                print("Length:", response.headers.get("content-length"))
-                print("========================================")
+                url = response.url
+                content_type = response.headers.get("content-type", "").lower()
 
-                if response.status == 206 and video_response is None:
-                    video_response = response
+                if (
+                    "video/mp4" in content_type
+                    or ".mp4" in url.lower()
+                ):
+                    print()
+                    print("========================================")
+                    print("VIDEO RESPONSE FOUND")
+                    print("Status:", response.status)
+                    print("Content-Type:", content_type)
+                    print("URL:", url[:200] + "...")
+                    print("Range:", response.headers.get("content-range"))
+                    print("Length:", response.headers.get("content-length"))
+                    print("========================================")
 
-        page.on("response", on_response)
+                    if response.status == 206 and video_response is None:
+                        video_response = response
 
-        print("Opening recording...")
+            page.on("response", on_response)
 
-        page.goto(
-            zoom_url,
-            wait_until="domcontentloaded"
-        )
+            print("Opening recording...")
 
-        print("Entering password...")
+            page.goto(
+                zoom_url,
+                wait_until="domcontentloaded"
+            )
 
-        password_box = page.locator('input[type="password"]')
+            print("Entering password...")
 
-        password_box.wait_for(
-            state="visible",
-            timeout=30000
-        )
+            password_box = page.locator('input[type="password"]')
 
-        password_box.fill(password)
+            password_box.wait_for(
+                state="visible",
+                timeout=30000
+            )
 
-        # Submit using Enter.
-        password_box.press("Enter")
+            password_box.fill(password)
 
-        # Wait for Zoom to request the video
-        page.wait_for_timeout(30000)
+            # Submit using Enter.
+            password_box.press("Enter")
 
-        download_current_video(context, video_response, f"{output} (1).mp4")
-        video_response = None
-
-        next_recording_btn = page.get_by_role("button", name="Go Forward to next clip")
-        try:
-            next_recording_btn.click(trial=True, timeout=3000)
-            next_recording_btn.click()
+            # Wait for Zoom to request the video
             page.wait_for_timeout(30000)
-            download_current_video(context, video_response, f"{output} (2).mp4")
-        except TimeoutError:
-            print("No second recording.")
 
-        browser.close()
+            download_current_video(context, video_response, f"{output} (1).mp4")
+            video_response = None
+
+            next_recording_btn = page.get_by_role("button", name="Go Forward to next clip")
+            try:
+                next_recording_btn.click(trial=True, timeout=3000)
+                next_recording_btn.click()
+                page.wait_for_timeout(30000)
+                download_current_video(context, video_response, f"{output} (2).mp4")
+            except TimeoutError:
+                print("No second recording.")
+
+            browser.close()
+    except Exception as e:
+        print(traceback.format_exc())
